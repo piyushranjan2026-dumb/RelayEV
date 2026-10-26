@@ -6,6 +6,11 @@ import { ChargingSessionManager } from "@/components/ChargingSessionManager";
 import { DriverWalletTopupModal } from "@/components/DriverWalletTopupModal";
 import { RouteNavigationModal, NavStation } from "@/components/RouteNavigationModal";
 import { Coordinates, calculateDistanceKm, DEFAULT_DRIVER_COORDS } from "@/lib/geoUtils";
+import { CyberTelemetryBar } from "@/components/CyberTelemetryBar";
+import { MeshRadarVisualizer } from "@/components/MeshRadarVisualizer";
+import { InteractiveStationCard } from "@/components/InteractiveStationCard";
+import { soundFx } from "@/lib/audioFx";
+import { triggerCyberParticles } from "@/lib/particles";
 
 export interface Station extends NavStation {
   status: "Available" | "Charging";
@@ -408,7 +413,10 @@ export default function Home() {
   const [driverBalance, setDriverBalance] = useState<number>(500.0);
   const [driverCoords, setDriverCoords] = useState<Coordinates>(DEFAULT_DRIVER_COORDS);
   const [isLocating, setIsLocating] = useState<boolean>(false);
-  const [locateStatus, setLocateStatus] = useState<string>("Katpadi / Vellore (Active GPS)");
+  const [locateStatus, setLocateStatus] = useState<string>("Katpadi / Vellore Core (GPS Active)");
+
+  // View Mode: Cards Grid vs Interactive Mesh Radar
+  const [viewMode, setViewMode] = useState<"GRID" | "RADAR">("GRID");
 
   // Filtering & Search States
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -480,8 +488,43 @@ export default function Home() {
     }
   };
 
+  // Live Grid Simulation Sandbox Handler
+  const handleSimulateGridState = (simState: "SURPLUS" | "STRAINED" | "BATTERY" | "NORMAL") => {
+    setStations((prev) =>
+      prev.map((st) => {
+        let multiplier = 1.0;
+        let reason = "Standard Municipal Grid Baseline";
+        let gridAvail = simState;
+
+        if (simState === "SURPLUS") {
+          multiplier = 0.8;
+          reason = "☀️ Live Solar Surplus Generation (-20% Discount)";
+        } else if (simState === "STRAINED") {
+          multiplier = 1.35;
+          reason = "⚡ Grid Feeder Peak Strain Surge (+35%)";
+        } else if (simState === "BATTERY") {
+          multiplier = 1.2;
+          reason = "🔋 High-Capacity Inverter Storage Backup (+20%)";
+        } else {
+          multiplier = 1.0;
+          reason = "Standard Grid Normal Availability";
+        }
+
+        const base = st.baseRate || st.rate;
+        const effectiveRate = Math.round(base * multiplier * 100) / 100;
+        return {
+          ...st,
+          rate: effectiveRate,
+          gridAvailability: gridAvail,
+          tariffReason: reason,
+        };
+      })
+    );
+  };
+
   // Driver GPS Geolocation
   const handleLocateMe = () => {
+    soundFx.playCyberClick();
     if (typeof navigator !== "undefined" && "geolocation" in navigator) {
       setIsLocating(true);
       navigator.geolocation.getCurrentPosition(
@@ -494,6 +537,7 @@ export default function Home() {
           setLocateStatus(`GPS Locked (${coords.latitude.toFixed(4)}°N, ${coords.longitude.toFixed(4)}°E)`);
           setIsLocating(false);
           setFilterType("NEAREST");
+          soundFx.playPowerPulse();
         },
         (err) => {
           console.warn("GPS error:", err.message);
@@ -559,13 +603,17 @@ export default function Home() {
   };
 
   return (
-    <div className="w-full min-h-screen bg-slate-900 text-slate-100 pb-16">
+    <div className="matrix-ambient-bg w-full min-h-screen text-slate-100 pb-20 relative">
       {/* Topup & Navigation Modals */}
       <DriverWalletTopupModal
         currentBalance={driverBalance}
         isOpen={isTopupOpen}
         onClose={() => setIsTopupOpen(false)}
-        onBalanceUpdated={(newBal) => setDriverBalance(newBal)}
+        onBalanceUpdated={(newBal) => {
+          setDriverBalance(newBal);
+          soundFx.playEscrowSuccess();
+          triggerCyberParticles();
+        }}
       />
 
       <RouteNavigationModal
@@ -579,21 +627,30 @@ export default function Home() {
         }}
       />
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-5">
+        {/* Continuous Cyber Ticker & Interactive Simulation Sandbox */}
+        <CyberTelemetryBar
+          onSimulateState={handleSimulateGridState}
+          activeFilter={filterType}
+        />
+
         {/* Top Header / Driver Status Bar */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-800">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-800/80">
           <div>
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-xs uppercase tracking-wider font-bold text-emerald-400">
-                Offline-First P2P Mesh • Supabase Realtime Connected
+              <span className="text-xs uppercase tracking-wider font-mono font-bold text-emerald-400">
+                P2P Offline Mesh • Real-Time Dynamic Grid Pricing
               </span>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-              Vellore EV Mesh Network
+            <h1 className="text-3xl sm:text-4xl font-black text-white tracking-tight flex items-baseline gap-2">
+              <span>Vellore EV Mesh Network</span>
+              <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono font-bold">
+                20 NODES
+              </span>
             </h1>
-            <p className="text-sm text-slate-400 mt-0.5">
-              20 verified decentralized charging stations operating with dynamic grid power tariffs.
+            <p className="text-sm text-slate-400 mt-1">
+              Decentralized peer-to-peer charging with cryptographic escrow over Web Bluetooth in cellular dead zones.
             </p>
           </div>
 
@@ -601,97 +658,111 @@ export default function Home() {
             <button
               onClick={handleLocateMe}
               disabled={isLocating}
-              className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 text-slate-200 px-3.5 py-2 rounded-xl text-xs font-semibold shadow-sm transition"
+              className="flex items-center gap-2 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-slate-200 px-4 py-2.5 rounded-2xl text-xs font-mono font-bold shadow-md transition cursor-pointer active:scale-95"
             >
               <span>📍</span>
               <span>{isLocating ? "Acquiring GPS..." : locateStatus}</span>
             </button>
             <Link
               href="/map"
-              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-lg shadow-emerald-900/40 transition"
+              onClick={() => soundFx.playCyberClick()}
+              className="btn-shimmer flex items-center gap-1.5 text-slate-950 px-4 py-2.5 rounded-2xl text-xs font-black shadow-lg shadow-emerald-500/25 transition cursor-pointer"
             >
-              <span>🗺️ Hex Map (20)</span>
+              <span>🗺️ Full Hex Map</span>
               <span>↗</span>
             </Link>
           </div>
         </div>
 
         {/* Driver Wallet & Mesh Quick Stats Hero */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 my-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 my-6">
           {/* Driver Wallet Card */}
-          <div className="md:col-span-2 bg-gradient-to-br from-slate-800 to-slate-850 border border-slate-700/80 rounded-2xl p-6 shadow-xl relative overflow-hidden flex flex-col justify-between">
-            <div className="flex items-start justify-between">
+          <div className="md:col-span-2 bg-gradient-to-br from-slate-900/90 via-slate-850/90 to-slate-900/90 border border-slate-700/80 rounded-3xl p-6 shadow-2xl relative overflow-hidden flex flex-col justify-between backdrop-blur-2xl">
+            <div className="absolute -top-12 -right-12 w-48 h-48 bg-emerald-500/15 rounded-full blur-3xl pointer-events-none" />
+
+            <div className="flex items-start justify-between relative z-10">
               <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                <span className="text-xs font-mono font-black uppercase tracking-wider text-emerald-400">
                   DRIVER PRE-FUNDED ESCROW WALLET
                 </span>
                 <div className="flex items-baseline gap-2 mt-2">
-                  <span className="text-4xl font-black text-white">₹{driverBalance.toFixed(2)}</span>
+                  <span className="text-4xl sm:text-5xl font-black text-white">₹{driverBalance.toFixed(2)}</span>
                   <span className="text-xs text-slate-400 font-mono">INR Available</span>
                 </div>
-                <div className="flex items-center gap-2 mt-2 text-xs text-slate-300">
+                <div className="flex items-center gap-2 mt-2.5 text-xs text-slate-300">
                   <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 font-bold flex items-center justify-center text-[10px]">
                     AR
                   </span>
                   <span>Anaya Rao (EV Driver • user_88)</span>
                   <span className="text-slate-600">•</span>
-                  <span className="text-emerald-400 font-medium">✓ Dynamic Tariff Escrow Secured</span>
+                  <span className="text-emerald-400 font-semibold">✓ Cryptographic Escrow Active</span>
                 </div>
               </div>
 
               <button
-                onClick={() => setIsTopupOpen(true)}
-                className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-emerald-500/20 transition flex items-center gap-1.5 cursor-pointer"
+                onClick={(e) => {
+                  soundFx.playCyberClick();
+                  triggerCyberParticles(e.clientX, e.clientY, "emerald");
+                  setIsTopupOpen(true);
+                }}
+                className="btn-shimmer text-slate-950 font-black text-xs px-5 py-3 rounded-2xl shadow-xl shadow-emerald-500/25 transition flex items-center gap-2 cursor-pointer active:scale-95"
               >
-                <span>+</span>
+                <span className="text-sm">+</span>
                 <span>Top Up Wallet</span>
               </button>
             </div>
 
-            <div className="grid grid-cols-3 gap-2 mt-6 pt-4 border-t border-slate-700/60 text-xs">
+            <div className="grid grid-cols-3 gap-3 mt-6 pt-5 border-t border-slate-800 text-xs relative z-10">
               <div>
-                <span className="text-slate-400 block text-[11px]">Nodes In Range</span>
-                <span className="font-bold text-white text-sm">20 Stations</span>
+                <span className="text-slate-400 block text-[11px] font-mono">Verified Stations</span>
+                <span className="font-black text-white text-base">20 Nodes</span>
               </div>
               <div>
-                <span className="text-slate-400 block text-[11px]">Dynamic Grid Rates</span>
-                <span className="font-bold text-emerald-400 text-sm">₹6.40 - ₹17.55</span>
+                <span className="text-slate-400 block text-[11px] font-mono">Dynamic Tariff Span</span>
+                <span className="font-black text-emerald-400 text-base">₹6.40 - ₹17.55</span>
               </div>
               <div>
-                <span className="text-slate-400 block text-[11px]">Macro Hex Clusters</span>
-                <span className="font-bold text-emerald-400 text-sm">3 Regional Sectors</span>
+                <span className="text-slate-400 block text-[11px] font-mono">Macro Hex Clusters</span>
+                <span className="font-black text-cyan-400 text-base">3 Sectors (Tier 1)</span>
               </div>
             </div>
           </div>
 
-          {/* Quick Connect / Map Portal Card */}
-          <div className="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between text-xs font-bold text-slate-400 mb-2">
-                <span>INTERACTIVE HEX MAP</span>
-                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px]">
-                  20 LOCATIONS
+          {/* Quick Connect / Mesh Radar Portal Card */}
+          <div className="bg-slate-900/90 border border-slate-700/80 rounded-3xl p-6 shadow-2xl flex flex-col justify-between backdrop-blur-2xl relative overflow-hidden">
+            <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-cyan-500/15 rounded-full blur-3xl pointer-events-none" />
+
+            <div className="relative z-10">
+              <div className="flex items-center justify-between text-xs font-mono font-bold text-slate-400 mb-2">
+                <span>INTERACTIVE RADAR</span>
+                <span className="px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 text-[10px] border border-cyan-500/30">
+                  REAL-TIME MESH
                 </span>
               </div>
-              <h3 className="text-base font-bold text-white mb-1.5">
+              <h3 className="text-base font-black text-white mb-1.5">
                 Full Corridor Spatial Discovery
               </h3>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Leaflet map indexing Katpadi, VIT, Sripuram, Fort, Bagayam, Ranipet, Ambur, Sholinghur, Walajah, Gudiyatham, Arcot, Vaniyambadi, Pallikonda, and Arakkonam.
+                Leaflet map indexing Katpadi, VIT, Sripuram, Fort, Ranipet, Ambur, Sholinghur, Walajah, and Arakkonam.
               </p>
             </div>
 
-            <div className="mt-4 flex flex-col gap-2">
-              <Link
-                href="/map"
-                className="w-full text-center bg-slate-700 hover:bg-slate-600 text-white font-bold text-xs py-2.5 rounded-xl border border-slate-600 transition flex items-center justify-center gap-2"
-              >
-                <span>🗺️ Open Full Hex Map (20)</span>
-                <span>→</span>
-              </Link>
+            <div className="mt-5 flex flex-col gap-2.5 relative z-10">
               <button
-                onClick={() => openStationDrawer(stations[0])}
-                className="w-full text-center bg-slate-900/80 hover:bg-slate-900 text-slate-300 font-semibold text-xs py-2 rounded-xl border border-slate-700 transition"
+                onClick={() => {
+                  soundFx.playPowerPulse();
+                  setViewMode(viewMode === "GRID" ? "RADAR" : "GRID");
+                }}
+                className="w-full text-center bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs py-2.5 rounded-xl border border-slate-700 transition flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+              >
+                <span>{viewMode === "GRID" ? "📡 Switch to Mesh Radar" : "🎴 Switch to Cards Grid"}</span>
+              </button>
+              <button
+                onClick={() => {
+                  soundFx.playChargeHum();
+                  openStationDrawer(stations[0]);
+                }}
+                className="w-full text-center bg-slate-950/80 hover:bg-slate-950 text-emerald-400 font-bold text-xs py-2 rounded-xl border border-emerald-500/30 transition cursor-pointer"
               >
                 ⚡ Start BLE Charge at VIT Relay
               </button>
@@ -700,9 +771,9 @@ export default function Home() {
         </div>
 
         {/* Station Search & Filter Toolbar */}
-        <div className="bg-slate-800/90 border border-slate-700/80 rounded-2xl p-4 mb-6 shadow-lg flex flex-col md:flex-row items-center justify-between gap-4">
+        <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-4 mb-6 shadow-xl flex flex-col md:flex-row items-center justify-between gap-4 backdrop-blur-xl">
           <div className="relative w-full md:w-96">
-            <span className="absolute inset-y-0 left-3 flex items-center text-slate-400 text-sm">
+            <span className="absolute inset-y-0 left-3.5 flex items-center text-slate-400 text-sm">
               🔍
             </span>
             <input
@@ -710,10 +781,11 @@ export default function Home() {
               placeholder="Search 20 stations (VIT, Katpadi, Sripuram, Arcot, Ambur, Vaniyambadi)..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-700 text-white placeholder-slate-500 rounded-xl pl-9 pr-4 py-2 text-xs focus:outline-none focus:border-emerald-500 transition"
+              className="w-full bg-slate-950 border border-slate-800 text-white placeholder-slate-500 rounded-2xl pl-10 pr-4 py-2.5 text-xs focus:outline-none focus:border-emerald-500 transition"
             />
           </div>
 
+          {/* Filter Chips + View Switcher */}
           <div className="flex items-center gap-2 flex-wrap w-full md:w-auto">
             {[
               { id: "ALL", label: `All (${stations.length})` },
@@ -726,21 +798,35 @@ export default function Home() {
               return (
                 <button
                   key={f.id}
-                  onClick={() => setFilterType(f.id as any)}
-                  className={`text-xs px-3.5 py-1.5 rounded-xl font-bold transition ${
+                  onClick={() => {
+                    soundFx.playCyberClick();
+                    setFilterType(f.id as any);
+                  }}
+                  className={`text-xs px-3.5 py-1.5 rounded-xl font-bold transition-all cursor-pointer ${
                     isActive
-                      ? "bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20"
-                      : "bg-slate-900/80 hover:bg-slate-700 text-slate-300 border border-slate-700"
+                      ? "bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/25 scale-105"
+                      : "bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800"
                   }`}
                 >
                   {f.label}
                 </button>
               );
             })}
+
+            {/* View Mode Toggle Button */}
+            <button
+              onClick={() => {
+                soundFx.playPowerPulse();
+                setViewMode(viewMode === "GRID" ? "RADAR" : "GRID");
+              }}
+              className="ml-auto text-xs px-3.5 py-1.5 rounded-xl font-bold bg-slate-800 hover:bg-slate-700 text-cyan-400 border border-cyan-500/30 transition cursor-pointer flex items-center gap-1.5"
+            >
+              <span>{viewMode === "GRID" ? "📡 Radar View" : "🎴 Cards Grid"}</span>
+            </button>
           </div>
         </div>
 
-        {/* Station Feed Section Header */}
+        {/* Main Feed Header */}
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="text-lg font-bold text-white flex items-center gap-2">
@@ -750,152 +836,59 @@ export default function Home() {
               </span>
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Live power tariffs updated dynamically based on solar generation, battery backup, and grid load.
+              Live power tariffs adjust dynamically based on solar generation, battery backup, and grid load.
             </p>
           </div>
         </div>
 
-        {/* Station Grid (20 Verified Locations) */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {displayedStations.map((st) => {
-            const distanceKm = calculateDistanceKm(driverCoords, {
-              latitude: st.latitude,
-              longitude: st.longitude,
-            });
+        {/* View Mode 1: Interactive Mesh Radar */}
+        {viewMode === "RADAR" && (
+          <div className="mb-8 animate-fade-in">
+            <MeshRadarVisualizer
+              stations={displayedStations}
+              onSelectStation={(st) => openStationDrawer(st)}
+              onNavigateStation={(st) => openRouteModal(st)}
+            />
+          </div>
+        )}
 
-            return (
-              <div
-                key={st.id}
-                onClick={() => openStationDrawer(st)}
-                className="bg-slate-800/70 hover:bg-slate-800 border border-slate-700/80 hover:border-emerald-500/50 rounded-2xl p-5 shadow-lg transition duration-200 cursor-pointer flex flex-col justify-between group"
-              >
-                <div>
-                  {/* Card Header: Node ID & Status */}
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-10 h-10 rounded-xl bg-slate-700/80 border border-slate-600 text-emerald-400 flex items-center justify-center font-black text-sm group-hover:scale-105 transition">
-                        {st.initials}
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-white text-sm group-hover:text-emerald-300 transition">
-                          {st.name}
-                        </h3>
-                        <p className="text-xs text-slate-400 line-clamp-1">{st.host}</p>
-                      </div>
-                    </div>
+        {/* View Mode 2: Interactive Station 3D Cards Grid */}
+        {viewMode === "GRID" && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 animate-fade-in">
+            {displayedStations.map((st) => {
+              const distanceKm = calculateDistanceKm(driverCoords, {
+                latitude: st.latitude,
+                longitude: st.longitude,
+              });
 
-                    <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider ${
-                        st.status === "Available"
-                          ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                          : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
-                      }`}
-                    >
-                      {st.status}
-                    </span>
-                  </div>
-
-                  {/* Grid Power Availability Badge */}
-                  {st.gridAvailability && (
-                    <div className="flex items-center gap-1.5 mb-2.5 flex-wrap">
-                      <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider border ${
-                          st.gridAvailability === "SURPLUS"
-                            ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
-                            : st.gridAvailability === "STRAINED"
-                            ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
-                            : st.gridAvailability === "BATTERY"
-                            ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
-                            : "bg-blue-500/20 text-blue-300 border-blue-500/40"
-                        }`}
-                      >
-                        {st.gridAvailability === "SURPLUS" && "🟢 Surplus Solar (-20%)"}
-                        {st.gridAvailability === "STRAINED" && "🔴 Grid Strain (+35%)"}
-                        {st.gridAvailability === "BATTERY" && "⚡ Battery Backup (+20%)"}
-                        {st.gridAvailability === "NORMAL" && "🟡 Normal Grid"}
-                      </span>
-                      {st.tariffReason && (
-                        <span className="text-[10px] text-slate-400 truncate max-w-[200px]" title={st.tariffReason}>
-                          {st.tariffReason}
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Location Address */}
-                  <div className="flex items-start gap-1.5 text-xs text-slate-300 mb-2">
-                    <span className="text-slate-400 shrink-0">📍</span>
-                    <span className="line-clamp-2">{st.place}</span>
-                  </div>
-
-                  {/* Hardware / Energy Note */}
-                  {st.hardwareNote && (
-                    <div className="text-[11px] text-slate-400 bg-slate-900/60 rounded-lg px-2.5 py-1.5 border border-slate-800 mb-4 line-clamp-2">
-                      <span className="text-emerald-400 font-semibold">✓ </span>
-                      {st.hardwareNote}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  {/* Tariff & Power Strip */}
-                  <div className="flex items-center justify-between pt-3 border-t border-slate-700/60 mb-3 text-xs">
-                    <div>
-                      <div className="flex items-baseline gap-1.5">
-                        <span className="text-lg font-black text-white">₹{st.rate.toFixed(2)}</span>
-                        {st.baseRate && Math.abs(st.baseRate - st.rate) > 0.01 && (
-                          <span className="text-xs text-slate-500 line-through">₹{st.baseRate.toFixed(2)}</span>
-                        )}
-                        <span className="text-slate-400 text-[11px]"> / kWh</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="bg-slate-900 text-slate-300 font-mono text-[11px] px-2 py-0.5 rounded border border-slate-700">
-                        ⚡ {st.power}
-                      </span>
-                      <span className="bg-blue-500/15 text-blue-400 font-mono text-[11px] px-2 py-0.5 rounded border border-blue-500/30">
-                        🚗 {distanceKm} km
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Actions: Navigate + Charge */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={(e) => openRouteModal(st, e)}
-                      className="w-full bg-slate-700 hover:bg-slate-600 text-white font-semibold text-xs py-2 rounded-xl transition flex items-center justify-center gap-1"
-                    >
-                      <span>📍 Navigate</span>
-                    </button>
-                    <button
-                      onClick={() => openStationDrawer(st)}
-                      className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 rounded-xl shadow-md shadow-emerald-900/30 transition flex items-center justify-center gap-1"
-                    >
-                      <span>Charge ⚡</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              return (
+                <InteractiveStationCard
+                  key={st.id}
+                  station={st}
+                  distanceKm={distanceKm}
+                  onCharge={openStationDrawer}
+                  onNavigate={openRouteModal}
+                />
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Slide-out Charging Drawer Overlay */}
       {selectedStation && (
         <div
-          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex justify-end"
+          className="fixed inset-0 bg-black/75 backdrop-blur-md z-50 flex justify-end animate-fade-in"
           onClick={closeStationDrawer}
         >
           <div
-            className="w-full max-w-lg h-full bg-slate-900 border-l border-slate-800 p-6 overflow-y-auto flex flex-col shadow-2xl animate-slide-in"
+            className="w-full max-w-lg h-full bg-slate-900 border-l border-slate-800 p-6 overflow-y-auto flex flex-col shadow-2xl animate-slide-in backdrop-blur-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Drawer Header */}
             <div className="flex items-start justify-between border-b border-slate-800 pb-4 mb-4">
               <div>
-                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono">
+                <span className="text-[10px] uppercase font-mono font-bold tracking-wider px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                   {selectedStation.id}
                 </span>
                 <h2 className="text-xl font-black text-white mt-2">{selectedStation.name}</h2>
@@ -904,7 +897,10 @@ export default function Home() {
                 </p>
               </div>
               <button
-                onClick={closeStationDrawer}
+                onClick={() => {
+                  soundFx.playCyberClick();
+                  closeStationDrawer();
+                }}
                 className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center font-bold text-sm transition"
               >
                 ✕
@@ -917,7 +913,11 @@ export default function Home() {
               initialNodeName={selectedStation.name}
               ratePerKwh={selectedStation.rate}
               onClose={closeStationDrawer}
-              onBalanceUpdated={(newBal) => setDriverBalance(newBal)}
+              onBalanceUpdated={(newBal) => {
+                setDriverBalance(newBal);
+                soundFx.playEscrowSuccess();
+                triggerCyberParticles();
+              }}
             />
           </div>
         </div>
